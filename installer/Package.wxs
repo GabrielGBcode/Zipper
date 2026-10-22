@@ -1,0 +1,33 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- Per-machine install in Program Files (UAC prompt), with the Explorer menu for every user, like WinRAR. -->
+  <Package Name="Zipper" Manufacturer="Zipper" Version="$(Version)" UpgradeCode="D57C3837-D0CA-49EC-8C73-40783DFC276A" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="Uma versão mais nova do Zipper já está instalada." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="ZipperIcon.ico" SourceFile="$(IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="ZipperIcon.ico" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Zipper">
+        <Component Id="App" Guid="F7ECC3B9-32F5-4AC6-9A84-A08B2784CAE8">
+          <File Id="ZipperExe" Source="$(PublishDir)Zipper.exe" KeyPath="yes">
+            <Shortcut Id="ZipperShortcut" Directory="ProgramMenuFolder" Name="Zipper" WorkingDirectory="INSTALLFOLDER" Advertise="yes" Icon="ZipperIcon.ico" />
+          </File>
+          <File Id="SevenZipExe" Source="$(PublishDir)7zr.exe" />
+          <File Id="ShellExtension" Source="$(PublishDir)ZipperShell.dll" />
+          <File Id="Notices" Source="$(PublishDir)THIRD-PARTY-NOTICES.txt" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- The app itself writes/removes the Explorer verbs (in HKLM when run from Program Files), so the labels live
+         in one place (ShellIntegration.cs). Impersonate="no" runs them elevated. -->
+    <CustomAction Id="RegisterShell" FileRef="ZipperExe" ExeCommand="--register" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="UnregisterShell" FileRef="ZipperExe" ExeCommand="--unregister" Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RegisterShell" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="UnregisterShell" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

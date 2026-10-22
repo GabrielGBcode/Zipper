@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- drawn by make-icon.ps1 -->
+    <ApplicationIcon>Zipper.ico</ApplicationIcon>
+    <!-- custom controls are built in code, never in the WinForms designer -->
+    <NoWarn>$(NoWarn);WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpZipLib" Version="1.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- kept beside Zipper.exe (not inside the single-file bundle) because it runs as its own process -->
+    <None Include="tools\7zr.exe" Link="7zr.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <!-- loaded by Explorer for the .zip/.7z menu; built from native\ by native\build.ps1 -->
+    <None Include="tools\ZipperShell.dll" Link="ZipperShell.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <InternalsVisibleTo Include="Zipper.Tests" />
+  </ItemGroup>
+
+</Project>
