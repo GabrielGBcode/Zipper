@@ -4,7 +4,7 @@ A WinRAR-style file archiver for Windows, written in C# (.NET 10, Windows Forms)
 
 ## Features
 
-- **ZIP and 7z**: create, open, add, delete, test and extract archives. ZIP uses SharpZipLib; 7z uses the bundled `7zr.exe`.
+- **ZIP and 7z**: create, open, add, delete, test and extract archives. ZIP uses SharpZipLib; 7z uses the bundled `7z.exe`. `.rar` can be browsed, tested and extracted (not created).
 - **Passwords**: encrypted ZIP and 7z (including encrypted file names in 7z). A wrong password never damages an existing archive.
 - **Add options**: compression level, exclude and store-only masks, update only newer files, archive comment, filters by archive attribute and date, NTFS timestamps, separate archive per item, name masks with date tokens, solid 7z and volumes.
 - **Progress and cancel**: cancelling keeps the original ZIP intact and removes a partial 7z.
@@ -30,4 +30,4 @@ Optional:
 
 ## Third-party components
 
-See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt): 7-Zip `7zr.exe` (LGPL 2.1) and SharpZipLib (MIT).
+See [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt): 7-Zip `7z.exe` + `7z.dll` (LGPL 2.1) and SharpZipLib (MIT).

@@ -5,17 +5,17 @@ using System.Text.RegularExpressions;
 
 namespace Zipper;
 
-// Creates .7z archives through the bundled 7zr.exe (official 7-Zip console build, LGPL).
+// Creates .7z archives and reads .7z/.rar through the bundled 7z.exe + 7z.dll (official 7-Zip, LGPL; its RAR code only extracts).
 static class SevenZipArchiver
 {
-    static string Exe => Path.Combine(AppContext.BaseDirectory, "7zr.exe");
+    static string Exe => Path.Combine(AppContext.BaseDirectory, "7z.exe");
 
     public static void Add(string archive, string[] files, AddOptions options, SevenZipOptions sevenZip, JobProgress? progress = null)
     {
         List<string> args = [options.OnlyNewer ? "u" : "a", "-t7z", $"-mx{options.Level}", $"-ms={(sevenZip.Solid ? "on" : "off")}", "-y", "-sccUTF-8"];
         if (sevenZip.DictionaryMb > 0) args.Add($"-md{sevenZip.DictionaryMb}m");
         if (sevenZip.Volume != null) args.Add($"-v{sevenZip.Volume}");
-        // shortcut: the password goes on 7zr's command line (visible to this user's processes), pipe it through stdin if that matters
+        // shortcut: the password goes on 7z's command line (visible to this user's processes), pipe it through stdin if that matters
         if (options.Password != null) args.Add($"-p{options.Password}");
         if (options.Paths == PathMode.Full) args.Add("-spf2");
         if (options.OpenShared) args.Add("-ssw");
@@ -46,7 +46,7 @@ static class SevenZipArchiver
         }
     }
 
-    public sealed record Entry(string Path, long Size, bool IsDirectory, bool Encrypted);
+    public sealed record Entry(string Path, long Size, bool IsDirectory, bool Encrypted, long Packed = 0, DateTime Modified = default, long Crc = -1);
 
     public static List<Entry> List(string archive, string? password)
     {
@@ -57,8 +57,11 @@ static class SevenZipArchiver
         return Regex.Split(Run(args).Replace("\r", ""), @"\n\s*\n")
             .Select(block => block.Split('\n').Select(l => l.Split(" = ", 2)).Where(kv => kv.Length == 2).ToDictionary(kv => kv[0].Trim(), kv => kv[1]))
             .Where(f => f.ContainsKey("Path"))
-            .Select(f => new Entry(f["Path"], long.TryParse(f.GetValueOrDefault("Size"), out var size) ? size : 0,
-                f.GetValueOrDefault("Attributes", "").StartsWith('D') || f.GetValueOrDefault("Folder") == "+", f.GetValueOrDefault("Encrypted") == "+"))
+            .Select(f => new Entry(f["Path"].Replace('\\', '/').TrimEnd('/'), long.TryParse(f.GetValueOrDefault("Size"), out var size) ? size : 0,
+                f.GetValueOrDefault("Attributes", "").StartsWith('D') || f.GetValueOrDefault("Folder") == "+", f.GetValueOrDefault("Encrypted") == "+",
+                long.TryParse(f.GetValueOrDefault("Packed Size"), out var packed) ? packed : 0,
+                DateTime.TryParse(f.GetValueOrDefault("Modified"), out var modified) ? modified : default,
+                long.TryParse(f.GetValueOrDefault("CRC"), System.Globalization.NumberStyles.HexNumber, null, out var crc) ? crc : -1))
             .ToList();
     }
 
@@ -74,12 +77,18 @@ static class SevenZipArchiver
         }
     }
 
-    public static void Extract(string archive, string destination, string? password, Func<string, bool> overwrite, JobProgress? progress = null)
+    // `names` (null = everything) are entry paths inside `prefix`; they land in `destination` relative to that prefix.
+    public static void Extract(string archive, string destination, string? password, Func<string, bool> overwrite, JobProgress? progress = null, IReadOnlyList<string>? names = null, string prefix = "")
     {
         // a wrong password would leave truncated files behind (even over existing ones), so check it first
         if (password != null && Test(archive, password) is [var error, ..]) throw new InvalidDataException(error);
         var root = Path.GetFullPath(destination);
         var entries = List(archive, password);
+        if (names != null)
+        {
+            ExtractSome(archive, root, password, overwrite, progress, names, prefix, entries);
+            return;
+        }
         // 7-Zip cannot ask per file, so existing files are asked about up front and excluded when kept
         var keep = entries.Where(e => !e.IsDirectory && File.Exists(Path.Combine(root, e.Path)) && !overwrite(Path.Combine(root, e.Path)));
 
@@ -89,6 +98,42 @@ static class SevenZipArchiver
         args.AddRange(["--", archive]);
         if (progress != null) progress.Total = entries.Sum(e => e.Size);
         Run(args, progress);
+    }
+
+    // 7-Zip cannot strip a folder prefix, so the items are extracted to a staging folder and moved into place.
+    static void ExtractSome(string archive, string root, string? password, Func<string, bool> overwrite, JobProgress? progress, IReadOnlyList<string> names, string prefix, List<Entry> entries)
+    {
+        if (progress != null)
+            progress.Total = entries.Where(e => names.Any(n => e.Path.Equals(n, StringComparison.OrdinalIgnoreCase) || e.Path.StartsWith(n + "/", StringComparison.OrdinalIgnoreCase))).Sum(e => e.Size);
+        var staging = Path.Combine(root, ".zipper-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(staging);
+            List<string> args = ["x", "-y", "-aoa", "-spd", "-sccUTF-8", $"-o{staging}"];
+            if (password != null) args.Add($"-p{password}");
+            args.AddRange(["--", archive]);
+            args.AddRange(names);
+            Run(args, progress);
+            foreach (var n in names) Merge(Path.Combine(staging, n), Path.Combine(root, n[prefix.Length..]), overwrite);
+        }
+        finally
+        {
+            Directory.Delete(staging, recursive: true);
+        }
+    }
+
+    static void Merge(string source, string target, Func<string, bool> overwrite)
+    {
+        if (Directory.Exists(source))
+        {
+            Directory.CreateDirectory(target);
+            foreach (var child in Directory.EnumerateFileSystemEntries(source)) Merge(child, Path.Combine(target, Path.GetFileName(child)), overwrite);
+        }
+        else if (File.Exists(source) && (!File.Exists(target) || overwrite(target)))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Move(source, target, overwrite: true);
+        }
     }
 
     public static List<string> Test(string archive, string? password)

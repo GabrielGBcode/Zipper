@@ -18,7 +18,8 @@
 
   <ItemGroup>
     <!-- kept beside Zipper.exe (not inside the single-file bundle) because it runs as its own process -->
-    <None Include="tools\7zr.exe" Link="7zr.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="tools\7z.exe" Link="7z.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="tools\7z.dll" Link="7z.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <!-- loaded by Explorer for the .zip/.7z menu; built from native\ by native\build.ps1 -->
     <None Include="tools\ZipperShell.dll" Link="ZipperShell.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <None Include="..\..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />

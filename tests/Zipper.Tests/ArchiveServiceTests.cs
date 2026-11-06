@@ -222,4 +222,42 @@ public sealed class ArchiveServiceTests : IDisposable
         Assert.Equal("beta", File.ReadAllText(Path.Combine(outDir, "b.txt")));
         Assert.Equal(9, progress.Total);
     }
+
+    [Fact]
+    public void SevenZip_lists_and_extracts_a_folder_relative_to_its_prefix()
+    {
+        var src = Path.Combine(dir, "src", "pasta");
+        Directory.CreateDirectory(Path.Combine(src, "sub"));
+        File.WriteAllText(Path.Combine(src, "sub", "a.txt"), "alfa");
+        var archive = Path.Combine(dir, "n.7z");
+        SevenZipArchiver.Add(archive, [src], new AddOptions(), new SevenZipOptions());
+
+        var items = AnyArchive.List(archive, null);
+        Assert.Contains(items, i => i.Name == "pasta/sub/a.txt" && i.Size == 4 && !i.IsDirectory);
+        Assert.Contains(items, i => i.Name == "pasta/sub" && i.IsDirectory);
+
+        var outDir = Path.Combine(dir, "out");
+        AnyArchive.Extract(archive, ["pasta/sub"], "pasta/", outDir, null, _ => true);
+        Assert.Equal("alfa", File.ReadAllText(Path.Combine(outDir, "sub", "a.txt")));
+        Assert.Empty(Directory.GetDirectories(outDir, ".zipper-*"));
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr handle);
+
+    [Fact]
+    public void VirtualFiles_describe_the_files_and_stream_their_contents()
+    {
+        Directory.CreateDirectory(Path.Combine(dir, "pasta")); File.WriteAllText(Path.Combine(dir, "pasta", "a.txt"), "alfa");
+        var data = new VirtualFiles([new("pasta/a.txt", false, 4), new("pasta", true, 0)], dir, Task.CompletedTask);
+        var format = new System.Runtime.InteropServices.ComTypes.FORMATETC { cfFormat = (short)System.Windows.Forms.DataFormats.GetFormat("FileContents").Id, dwAspect = System.Runtime.InteropServices.ComTypes.DVASPECT.DVASPECT_CONTENT, lindex = 0, tymed = System.Runtime.InteropServices.ComTypes.TYMED.TYMED_ISTREAM };
+        Assert.Equal(0, data.QueryGetData(ref format));
+        var descriptor = GlobalLock(data.BuildDescriptor());
+        Assert.Equal(2, System.Runtime.InteropServices.Marshal.ReadInt32(descriptor));
+        Assert.Equal(@"pasta\a.txt", System.Runtime.InteropServices.Marshal.PtrToStringUni(descriptor + 4 + 72));
+        data.GetData(ref format, out var medium);
+        var stream = (System.Runtime.InteropServices.ComTypes.IStream)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(medium.unionmember);
+        var buffer = new byte[4];
+        stream.Read(buffer, 4, IntPtr.Zero);
+        Assert.Equal("alfa", System.Text.Encoding.ASCII.GetString(buffer));
+    }
 }

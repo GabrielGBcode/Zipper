@@ -1,7 +1,7 @@
 Zipper inclui componentes de terceiros:
 
-7zr.exe - 7-Zip 26.04 (c) Igor Pavlov
-  Licença: GNU LGPL 2.1 (com restrição unRAR que não se aplica ao 7zr). Código-fonte: https://www.7-zip.org
+7z.exe, 7z.dll - 7-Zip 26.04 (c) Igor Pavlov
+  Licença: GNU LGPL 2.1 + restrição unRAR (o código RAR só é usado para extrair, nunca para recriar o algoritmo RAR). Código-fonte: https://www.7-zip.org
 
 SharpZipLib 1.4.2 - (c) ICSharpCode
   Licença: MIT. https://github.com/icsharpcode/SharpZipLib

@@ -1,5 +1,5 @@
 # Builds src\Zipper\tools\ZipperShell.dll (Explorer menu for .zip/.7z) with MinGW-w64 and runs its self-check.
-# The DLL is kept in the repo like 7zr.exe, so building Zipper or the installer does not need a C++ compiler.
+# The DLL is kept in the repo like 7z.exe, so building Zipper or the installer does not need a C++ compiler.
 # MinGW: winget install BrechtSanders.WinLibs.POSIX.UCRT
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot

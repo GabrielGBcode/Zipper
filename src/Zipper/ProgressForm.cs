@@ -10,7 +10,7 @@ public sealed class JobProgress
     public CancellationToken Token;
     public IWin32Window? Window;
     public Func<Func<bool>, bool> OnUi = ask => ask();
-    public Action<bool>? Paused; // lets 7zr.exe be suspended too
+    public Action<bool>? Paused; // lets 7z.exe be suspended too
     readonly ManualResetEventSlim running = new(true);
 
     public void Begin(string file, long size) => (File, FileDone, FileTotal) = (file, 0, size);

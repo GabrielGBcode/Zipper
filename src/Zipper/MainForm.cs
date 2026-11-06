@@ -38,6 +38,7 @@ public sealed class MainForm : Form
     readonly ToolTip tips = new();
     string bannerDetail = "";
     ListViewItem? hot; // row under the mouse
+    bool dragging; // our own drag-out is running: the list must not take it as an "add files" drop
 
     string currentDir = ShellIntegration.DownloadsFolder();
     string? archivePath;
@@ -78,7 +79,18 @@ public sealed class MainForm : Form
         list.DoubleClick += (_, _) => OpenSelected();
         list.SelectedIndexChanged += (_, _) => UpdateStatus();
         list.KeyDown += ListKeyDown;
-        list.DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
+        list.ItemDrag += (_, _) => DragOut();
+        list.MouseDown += (_, e) =>
+        {
+            // right click selects the row under the mouse (unless it is already part of the selection), like Explorer
+            if (e.Button == MouseButtons.Right && list.GetItemAt(e.X, e.Y) is { Selected: false } item)
+            {
+                list.SelectedItems.Clear();
+                item.Selected = item.Focused = true;
+            }
+        };
+        list.ContextMenuStrip = BuildRowMenu();
+        list.DragEnter += (_, e) => e.Effect = !dragging && e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         list.DragDrop += (_, e) =>
         {
             // after the drop returns, so Explorer is not blocked while the dialogs are open
@@ -227,6 +239,81 @@ public sealed class MainForm : Form
         };
     }
 
+    // Right-click menu of the file list; items are enabled according to what is selected.
+    ContextMenuStrip BuildRowMenu()
+    {
+        ToolStripMenuItem Item(string text, string keys, Action action)
+        {
+            var item = new ToolStripMenuItem(text) { ShortcutKeyDisplayString = keys };
+            item.Click += (_, _) => action();
+            return item;
+        }
+
+        var open = Item("&Abrir", "Enter", OpenSelected);
+        var view = Item("&Visualizar", "Alt+V", ViewSelected);
+        var extract = Item("&Extrair para...", "Alt+E", Extract);
+        var test = Item("&Testar", "Alt+T", Test);
+        var add = Item("Adicionar ao arquivo...", "Alt+A", AddFiles);
+        var delete = Item("E&xcluir", "Del", Delete);
+        var info = Item("&Informações", "Alt+I", Info);
+        var menu = new ContextMenuStrip
+        {
+            Items = { open, view, new ToolStripSeparator(), extract, test, add, new ToolStripSeparator(), delete, info, new ToolStripSeparator(), Item("Selecionar &tudo", "Ctrl+A", SelectAll) },
+        };
+        menu.Opening += (_, _) =>
+        {
+            var any = Selected.Any();
+            var archives = SelectedArchives().Length > 0;
+            open.Enabled = list.SelectedItems.Count > 0;
+            view.Enabled = any && (archivePath != null || !Selected.First().IsDir);
+            extract.Enabled = test.Enabled = archives && (archivePath != null || Selected.Any());
+            info.Enabled = archives;
+            delete.Enabled = any;
+        };
+        return menu;
+    }
+
+    // Dragging rows out of the window. Archive rows are extracted in the background while the drag runs and handed to
+    // Explorer as virtual files, so Explorer only waits (at the drop) for whatever is still unpacked.
+    void DragOut()
+    {
+        var rows = Selected.ToArray();
+        if (rows.Length == 0) return;
+        dragging = true;
+        try
+        {
+            if (archivePath == null)
+            {
+                list.DoDragDrop(new DataObject(DataFormats.FileDrop, rows.Select(r => r.Path).ToArray()), DragDropEffects.Copy);
+                return;
+            }
+            var (zip, prefix) = (archivePath, archiveFolder);
+            var asked = password == null;
+            if (!TryGetPassword(zip, out var pw) || (asked && pw != null)) return; // the password dialog ends this mouse gesture; drag again
+            var names = rows.Select(r => r.Path).ToArray();
+            var files = items
+                .Where(i => names.Any(n => i.Name.Equals(n, StringComparison.OrdinalIgnoreCase) || i.Name.StartsWith(n + "/", StringComparison.OrdinalIgnoreCase)))
+                .Select(i => new VirtualFiles.Item(i.Name[prefix.Length..], i.IsDirectory, i.Size)).ToArray();
+            var temp = Path.Combine(Path.GetTempPath(), "Zipper", Guid.NewGuid().ToString("N"));
+            var cancel = new CancellationTokenSource();
+            var progress = new JobProgress { Token = cancel.Token };
+            var extraction = Task.Run(() => AnyArchive.Extract(zip, names, prefix, temp, pw, _ => true, progress));
+            var effect = list.DoDragDrop(new VirtualFiles(files, temp, extraction), DragDropEffects.Copy);
+            if (effect != DragDropEffects.None) return;
+            // dropped nowhere: stop unpacking and clean up
+            cancel.Cancel();
+            _ = extraction.ContinueWith(_ =>
+            {
+                try { Directory.Delete(temp, recursive: true); }
+                catch (IOException) { }
+            });
+        }
+        finally
+        {
+            dragging = false;
+        }
+    }
+
     // The keyboard shortcuts the old menu bar had, plus Alt+arrows for history. Del and Ctrl+A are handled by the list
     // so they keep working in the address box.
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -317,6 +404,8 @@ public sealed class MainForm : Form
     IEnumerable<Row> Selected => list.SelectedItems.Cast<ListViewItem>().Select(i => (Row)i.Tag!).Where(r => !r.IsUp);
 
     static bool IsZip(string path) => path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+
+    static bool IsArchive(string path) => IsZip(path) || AnyArchive.ViaSevenZip(path);
 
     static string Bytes(long n) => n.ToString("N0");
 
@@ -433,28 +522,25 @@ public sealed class MainForm : Form
             currentDir = Path.GetFullPath(path);
             RefreshList();
         }
-        else if (File.Exists(path) && IsZip(path)) OpenArchive(path);
-        else if (File.Exists(path) && AnyArchive.Is7z(path))
-        {
-            // shortcut: .7z contents cannot be browsed yet, so show it selected in its folder (Extrair/Testar work on it)
-            archivePath = null;
-            currentDir = Path.GetDirectoryName(Path.GetFullPath(path))!;
-            RefreshList();
-            var item = list.Items.Cast<ListViewItem>().FirstOrDefault(i => string.Equals(((Row)i.Tag!).Path, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase));
-            if (item != null)
-            {
-                item.Selected = item.Focused = true;
-                item.EnsureVisible();
-            }
-        }
+        else if (File.Exists(path) && IsArchive(path)) OpenArchive(path);
         else Ui.Error(this, $"Caminho não encontrado: {path}");
     }
 
     void OpenArchive(string zip)
     {
+        string? pw = null;
         try
         {
-            items = ArchiveService.List(zip);
+            try
+            {
+                items = AnyArchive.List(zip, null);
+            }
+            catch (InvalidOperationException) when (AnyArchive.ViaSevenZip(zip))
+            {
+                // encrypted file names: 7-Zip cannot list them without the password
+                if ((pw = PasswordDialog.Ask(this, $"Senha para {Path.GetFileName(zip)}", confirm: false)) == null) return;
+                items = AnyArchive.List(zip, pw);
+            }
         }
         catch (Exception ex)
         {
@@ -464,7 +550,7 @@ public sealed class MainForm : Form
         archivePath = Path.GetFullPath(zip);
         archiveFolder = "";
         currentDir = Path.GetDirectoryName(archivePath)!;
-        password = null;
+        password = pw;
         RefreshList();
     }
 
@@ -477,7 +563,7 @@ public sealed class MainForm : Form
         }
         try
         {
-            items = ArchiveService.List(archivePath);
+            items = AnyArchive.List(archivePath, password);
         }
         catch (Exception ex)
         {
@@ -512,7 +598,7 @@ public sealed class MainForm : Form
         {
             try
             {
-                items = ArchiveService.List(target.Archive);
+                items = AnyArchive.List(target.Archive, null);
                 password = null;
             }
             catch (Exception ex)
@@ -559,7 +645,7 @@ public sealed class MainForm : Form
             currentDir = row.Path;
             RefreshList();
         }
-        else if (IsZip(row.Path)) OpenArchive(row.Path);
+        else if (IsArchive(row.Path)) OpenArchive(row.Path);
         else ShellOpen(row.Path);
     }
 
@@ -613,7 +699,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            if (ex is ZipException) password = null; // most likely a wrong password: ask again next time
+            if (ex is ZipException or InvalidDataException) password = null; // most likely a wrong password: ask again next time
             Ui.Error(this, ex.Message);
             return false;
         }
@@ -629,7 +715,7 @@ public sealed class MainForm : Form
     {
         var error = ProgressForm.Run(this, title, archive, verb, minimized, work);
         if (error == null) return true;
-        if (error is ZipException) password = null; // most likely a wrong password: ask again next time
+        if (error is ZipException or InvalidDataException) password = null; // most likely a wrong password: ask again next time
         if (error is not OperationCanceledException) Ui.Error(this, error.Message);
         return false;
     }
@@ -655,7 +741,7 @@ public sealed class MainForm : Form
     }
 
     string[] SelectedArchives() =>
-        archivePath != null ? [archivePath] : Selected.Where(r => !r.IsDir && (IsZip(r.Path) || AnyArchive.Is7z(r.Path))).Select(r => r.Path).ToArray();
+        archivePath != null ? [archivePath] : Selected.Where(r => !r.IsDir && IsArchive(r.Path)).Select(r => r.Path).ToArray();
 
     void AddFiles()
     {
@@ -672,6 +758,11 @@ public sealed class MainForm : Form
     void AddPaths(string[] files)
     {
         if (files.Length == 0) return;
+        if (archivePath != null && !IsZip(archivePath))
+        {
+            Ui.Error(this, "Só é possível adicionar itens dentro de arquivos .zip abertos.");
+            return;
+        }
         using var dialog = new AddDialog(files, archivePath ?? AddJob.DefaultName(files, ".zip"), fixedName: archivePath != null);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -689,7 +780,7 @@ public sealed class MainForm : Form
         var zips = SelectedArchives();
         if (zips.Length == 0)
         {
-            Ui.Error(this, "Selecione um arquivo .zip ou .7z para extrair.");
+            Ui.Error(this, "Selecione um arquivo .zip, .7z ou .rar para extrair.");
             return;
         }
         var defaultDest = zips.Length == 1
@@ -710,7 +801,7 @@ public sealed class MainForm : Form
                 {
                     var overwrite = Ui.OverwriteAsker(mode, p.Window, p.OnUi);
                     if (names == null && prefix == "") AnyArchive.ExtractAll(zip, dest, pw, overwrite, p);
-                    else ArchiveService.Extract(zip, names, prefix, dest, pw, overwrite, p); // inside an open .zip
+                    else AnyArchive.Extract(zip, names, prefix, dest, pw, overwrite, p); // inside an open archive
                 })) return;
         }
         status.Text = "Extração concluída.";
@@ -747,7 +838,7 @@ public sealed class MainForm : Form
         var temp = Path.Combine(Path.GetTempPath(), "Zipper", Guid.NewGuid().ToString("N"));
         var (zip, prefix) = (archivePath, archiveFolder);
         if (WithProgress($"Extraindo de {Path.GetFileName(zip)}", Path.GetFileName(zip), "extraindo", false,
-            p => ArchiveService.Extract(zip, [row.Path], prefix, temp, pw, _ => true, p)))
+            p => AnyArchive.Extract(zip, [row.Path], prefix, temp, pw, _ => true, p)))
             ShellOpen(Path.Combine(temp, row.Name));
     }
 
@@ -773,18 +864,23 @@ public sealed class MainForm : Form
             return;
         }
         var zip = archivePath;
+        if (!IsZip(zip))
+        {
+            Ui.Error(this, "Só é possível excluir itens dentro de arquivos .zip abertos.");
+            return;
+        }
         var names = rows.Select(r => r.Path).ToArray();
         if (await Run(() => ArchiveService.Delete(zip, names))) ReloadArchive();
     }
 
     void Info()
     {
-        var zip = SelectedArchives().FirstOrDefault(IsZip);
+        var zip = SelectedArchives().FirstOrDefault();
         if (zip == null) return;
         List<ArchiveItem> all;
         try
         {
-            all = zip == archivePath ? items : ArchiveService.List(zip);
+            all = zip == archivePath ? items : AnyArchive.List(zip, null);
         }
         catch (Exception ex)
         {

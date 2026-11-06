@@ -12,7 +12,8 @@
           <File Id="ZipperExe" Source="$(PublishDir)Zipper.exe" KeyPath="yes">
             <Shortcut Id="ZipperShortcut" Directory="ProgramMenuFolder" Name="Zipper" WorkingDirectory="INSTALLFOLDER" Advertise="yes" Icon="ZipperIcon.ico" />
           </File>
-          <File Id="SevenZipExe" Source="$(PublishDir)7zr.exe" />
+          <File Id="SevenZipExe" Source="$(PublishDir)7z.exe" />
+          <File Id="SevenZipDll" Source="$(PublishDir)7z.dll" />
           <File Id="ShellExtension" Source="$(PublishDir)ZipperShell.dll" />
           <File Id="Notices" Source="$(PublishDir)THIRD-PARTY-NOTICES.txt" />
         </Component>

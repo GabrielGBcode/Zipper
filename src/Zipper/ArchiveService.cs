@@ -252,18 +252,30 @@ public static class ArchiveService
     }
 }
 
-// Whole-archive operations for either format, picked by extension.
+// Archive operations for any supported format, picked by extension.
 public static class AnyArchive
 {
-    public static bool Is7z(string path) => path.EndsWith(".7z", StringComparison.OrdinalIgnoreCase);
+    // .7z and .rar go through 7-Zip (the .rar side is read-only)
+    public static bool ViaSevenZip(string path) => path.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".rar", StringComparison.OrdinalIgnoreCase);
 
-    public static bool IsEncrypted(string path) => Is7z(path) ? SevenZipArchiver.IsEncrypted(path) : ArchiveService.HasEncrypted(path);
+    // SevenZipArchiver.List throws InvalidOperationException when the file names are encrypted and `password` is missing.
+    public static List<ArchiveItem> List(string path, string? password) => ViaSevenZip(path)
+        ? SevenZipArchiver.List(path, password).Select(e => new ArchiveItem(e.Path, e.Size, e.Packed, e.Modified, e.Crc, e.IsDirectory, e.Encrypted)).ToList()
+        : ArchiveService.List(path);
 
-    public static List<string> Test(string path, string? password) => Is7z(path) ? SevenZipArchiver.Test(path, password) : ArchiveService.Test(path, password);
+    public static void Extract(string path, IReadOnlyList<string>? names, string prefix, string destination, string? password, Func<string, bool> overwrite, JobProgress? progress = null)
+    {
+        if (ViaSevenZip(path)) SevenZipArchiver.Extract(path, destination, password, overwrite, progress, names, prefix);
+        else ArchiveService.Extract(path, names, prefix, destination, password, overwrite, progress);
+    }
+
+    public static bool IsEncrypted(string path) => ViaSevenZip(path) ? SevenZipArchiver.IsEncrypted(path) : ArchiveService.HasEncrypted(path);
+
+    public static List<string> Test(string path, string? password) => ViaSevenZip(path) ? SevenZipArchiver.Test(path, password) : ArchiveService.Test(path, password);
 
     public static void ExtractAll(string path, string destination, string? password, Func<string, bool> overwrite, JobProgress? progress = null)
     {
-        if (Is7z(path)) SevenZipArchiver.Extract(path, destination, password, overwrite, progress);
+        if (ViaSevenZip(path)) SevenZipArchiver.Extract(path, destination, password, overwrite, progress);
         else ArchiveService.Extract(path, null, "", destination, password, overwrite, progress);
     }
 }
